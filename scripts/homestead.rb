@@ -11,10 +11,10 @@ class Homestead
     config.ssh.forward_agent = true
 
     # Configure The Box
-    config.vm.define settings['name'] ||= 'homestead-7'
-    config.vm.box = settings['box'] ||= 'laravel/homestead'
-    config.vm.box_version = settings['version'] ||= '>= 6.3.0'
-    config.vm.hostname = settings['hostname'] ||= 'homestead'
+    config.vm.define settings['name'] ||= 'rails-dev'
+    config.vm.box = settings['box'] ||= 'tszg/rails-dev'
+    config.vm.box_version = settings['version'] ||= '>= 1.0'
+    config.vm.hostname = settings['hostname'] ||= 'rails-dev'
 
     # Configure A Private Network IP
     if settings['ip'] != 'autonetwork'
@@ -32,7 +32,7 @@ class Homestead
 
     # Configure A Few VirtualBox Settings
     config.vm.provider 'virtualbox' do |vb|
-      vb.name = settings['name'] ||= 'homestead-7'
+      vb.name = settings['name'] ||= 'rails-dev'
       vb.customize ['modifyvm', :id, '--memory', settings['memory'] ||= '2048']
       vb.customize ['modifyvm', :id, '--cpus', settings['cpus'] ||= '1']
       vb.customize ['modifyvm', :id, '--natdnsproxy1', 'on']
@@ -51,7 +51,7 @@ class Homestead
     # Configure A Few VMware Settings
     ['vmware_fusion', 'vmware_workstation'].each do |vmware|
       config.vm.provider vmware do |v|
-        v.vmx['displayName'] = settings['name'] ||= 'homestead-7'
+        v.vmx['displayName'] = settings['name'] ||= 'rails-dev'
         v.vmx['memsize'] = settings['memory'] ||= 2048
         v.vmx['numvcpus'] = settings['cpus'] ||= 1
         v.vmx['guestOS'] = 'ubuntu-64'
@@ -63,7 +63,7 @@ class Homestead
 
     # Configure A Few Hyper-V Settings
     config.vm.provider "hyperv" do |h, override|
-      h.vmname = settings['names'] ||= 'homestead-7'
+      h.vmname = settings['names'] ||= 'rails-dev'
       h.cpus = settings['cpus'] ||= 1
       h.memory = settings['memory'] ||= 2048
       h.linked_clone = true
@@ -75,7 +75,7 @@ class Homestead
 
     # Configure A Few Parallels Settings
     config.vm.provider 'parallels' do |v|
-      v.name = settings['name'] ||= 'homestead-7'
+      v.name = settings['name'] ||= 'rails-dev'
       v.update_guest_tools = settings['update_parallels_tools'] ||= false
       v.memory = settings['memory'] ||= 2048
       v.cpus = settings['cpus'] ||= 1
@@ -195,152 +195,9 @@ class Homestead
       end
     end
 
-    # Install All The Configured Nginx Sites
-    config.vm.provision 'shell' do |s|
-      s.path = script_dir + '/clear-nginx.sh'
-    end
-
-    if settings.include? 'sites'
-      settings['sites'].each do |site|
-
-        # Create SSL certificate
-        config.vm.provision 'shell' do |s|
-          s.name = 'Creating Certificate: ' + site['map']
-          s.path = script_dir + '/create-certificate.sh'
-          s.args = [site['map']]
-        end
-
-        type = site['type'] ||= 'laravel'
-        load_balancer = settings['load_balancer'] ||= false
-        http_port = load_balancer ? '8111' : '80'
-        https_port = load_balancer ? '8112' : '443'
-
-        if load_balancer
-            config.vm.provision 'shell' do |s|
-                s.path = script_dir + '/install-load-balancer.sh'
-            end
-        end
-
-        case type
-        when 'apigility'
-          type = 'zf'
-        when 'expressive'
-          type = 'zf'
-        when 'symfony'
-          type = 'symfony2'
-        end
-
-        config.vm.provision 'shell' do |s|
-          s.name = 'Creating Site: ' + site['map']
-          if site.include? 'params'
-            params = '('
-            site['params'].each do |param|
-              params += ' [' + param['key'] + ']=' + param['value']
-            end
-            params += ' )'
-          end
-          if site.include? 'headers'
-            headers = '('
-            site['headers'].each do |header|
-                headers += ' [' + header['key'] + ']=' + header['value']
-            end
-            headers += ' )'
-          end
-          s.path = script_dir + "/serve-#{type}.sh"
-          s.args = [site['map'], site['to'], site['port'] ||= http_port, site['ssl'] ||= https_port, site['php'] ||= '7.2', params ||= '', site['zray'] ||= 'false', site['exec'] ||= 'false', headers ||= '']
-
-          if site['zray'] == 'true'
-            config.vm.provision 'shell' do |s|
-              s.inline = 'ln -sf /opt/zray/gui/public ' + site['to'] + '/ZendServer'
-            end
-            config.vm.provision 'shell' do |s|
-              s.inline = 'ln -sf /opt/zray/lib/zray.so /usr/lib/php/20170718/zray.so'
-            end
-            config.vm.provision 'shell' do |s|
-              s.inline = 'ln -sf /opt/zray/zray.ini /etc/php/7.2/fpm/conf.d/zray.ini'
-            end
-          else
-            config.vm.provision 'shell' do |s|
-              s.inline = 'rm -rf ' + site['to'] + '/ZendServer'
-            end
-          end
-        end
-
-        # Configure The Cron Schedule
-        if site.has_key?('schedule')
-          config.vm.provision 'shell' do |s|
-            s.name = 'Creating Schedule'
-
-            if site['schedule']
-              s.path = script_dir + '/cron-schedule.sh'
-              s.args = [site['map'].tr('^A-Za-z0-9', ''), site['to']]
-            else
-              s.inline = "rm -f /etc/cron.d/$1"
-              s.args = [site['map'].tr('^A-Za-z0-9', '')]
-            end
-          end
-        else
-          config.vm.provision 'shell' do |s|
-            s.name = 'Checking for old Schedule'
-            s.inline = "rm -f /etc/cron.d/$1"
-            s.args = [site['map'].tr('^A-Za-z0-9', '')]
-          end
-        end
-      end
-    end
-
-    # Configure All Of The Server Environment Variables
-    config.vm.provision 'shell' do |s|
-      s.name = 'Clear Variables'
-      s.path = script_dir + '/clear-variables.sh'
-    end
-
-    if settings.has_key?('variables')
-      settings['variables'].each do |var|
-        config.vm.provision 'shell' do |s|
-          s.inline = "echo \"\nenv[$1] = '$2'\" >> /etc/php/5.6/fpm/pool.d/www.conf"
-          s.args = [var['key'], var['value']]
-        end
-
-        config.vm.provision 'shell' do |s|
-          s.inline = "echo \"\nenv[$1] = '$2'\" >> /etc/php/7.0/fpm/pool.d/www.conf"
-          s.args = [var['key'], var['value']]
-        end
-
-        config.vm.provision 'shell' do |s|
-          s.inline = "echo \"\nenv[$1] = '$2'\" >> /etc/php/7.1/fpm/pool.d/www.conf"
-          s.args = [var['key'], var['value']]
-        end
-
-        config.vm.provision 'shell' do |s|
-          s.inline = "echo \"\nenv[$1] = '$2'\" >> /etc/php/7.2/fpm/pool.d/www.conf"
-          s.args = [var['key'], var['value']]
-        end
-
-        config.vm.provision 'shell' do |s|
-            s.inline = "echo \"\nenv[$1] = '$2'\" >> /etc/php/7.3/fpm/pool.d/www.conf"
-            s.args = [var['key'], var['value']]
-        end
-
-        config.vm.provision 'shell' do |s|
-          s.inline = "echo \"\n# Set Homestead Environment Variable\nexport $1=$2\" >> /home/vagrant/.profile"
-          s.args = [var['key'], var['value']]
-        end
-      end
-
-      config.vm.provision 'shell' do |s|
-        s.inline = 'service php5.6-fpm restart; service php7.0-fpm restart; service php7.1-fpm restart; service php7.2-fpm restart; service php7.3-fpm restart;'
-      end
-    end
-
     config.vm.provision 'shell' do |s|
       s.name = 'Restarting Cron'
       s.inline = 'sudo service cron restart'
-    end
-
-    config.vm.provision 'shell' do |s|
-      s.name = 'Restarting Nginx'
-      s.inline = 'sudo service nginx restart; sudo service php5.6-fpm restart; sudo service php7.0-fpm restart; sudo service php7.1-fpm restart; sudo service php7.2-fpm restart; sudo service php7.3-fpm restart;'
     end
 
     # Install CouchDB If Necessary
@@ -462,13 +319,6 @@ class Homestead
       end
     end
 
-    # Update Composer On Every Provision
-    config.vm.provision 'shell' do |s|
-      s.name = 'Update Composer'
-      s.inline = 'sudo /usr/local/bin/composer self-update --no-progress && sudo chown -R vagrant:vagrant /home/vagrant/.composer/'
-      s.privileged = false
-    end
-
     # Configure Blackfire.io
     if settings.has_key?('blackfire')
       config.vm.provision 'shell' do |s|
@@ -497,7 +347,7 @@ class Homestead
       end
     end
 
-    # Turn off CFQ scheduler idling https://github.com/laravel/homestead/issues/896
+    # Turn off CFQ scheduler idling https://github.com/tszg/rails-dev/issues/896
     if settings.has_key?('disable_cfq')
       config.vm.provision 'shell' do |s|
         s.inline = 'sudo echo 0 >/sys/block/sda/queue/iosched/slice_idle'
